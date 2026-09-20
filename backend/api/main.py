@@ -1,21 +1,73 @@
-"""API FastAPI para disparar/monitorear la indexación de SharePoint y recibir
-notificaciones de cambios de Microsoft Graph (near real-time).
+"""API FastAPI del proyecto (SharePoint + Azure AI Search).
+
+La indexación se hace con prepdocslib: descarga directo de SharePoint (Microsoft Graph),
+parsing/chunking con Azure AI Document Intelligence y embeddings con Azure OpenAI. Sin
+Azure Blob Storage: cada chunk referencia la URL del documento en SharePoint.
+
+Además de disparar la sincronización manualmente, el propio proceso corre un loop en
+background que revisa SharePoint cada INDEX_SYNC_INTERVAL_MINUTES (default 5) y solo
+procesa archivos nuevos/modificados/borrados (incremental, vía Graph delta).
 
 Endpoints:
   GET  /health
-  POST /reindex           -> dispara una corrida manual del indexer (equivalente al botón "reindexar")
-  GET  /reindex/status    -> estado de la última corrida
-  POST /webhooks/sharepoint -> receptor de notificaciones de Microsoft Graph (subscriptions)
-  GET  /webhooks/sharepoint -> validación de la suscripción (Graph hace un GET con validationToken)
+  POST /index/sharepoint         -> dispara una sincronización manual (bloquea si ya hay una corriendo)
+  GET  /index/sharepoint/status  -> estado de la última corrida (manual o automática)
 
 Ejecutar: uvicorn backend.api.main:app --reload --port 8000
 """
-from fastapi import FastAPI, Request, Response, HTTPException
+import asyncio
+import logging
+from contextlib import asynccontextmanager
+from datetime import datetime, timezone
+
+from fastapi import FastAPI, HTTPException
 
 from ..common.config import settings
-from ..common.search_rest import get, post
+from ..scripts.index_sharepoint import run_sharepoint_sync
 
-app = FastAPI(title="SharePoint Indexer API", version="1.0.0")
+logger = logging.getLogger("scripts")
+
+_sync_lock = asyncio.Lock()
+_last_sync: dict = {"started_at": None, "finished_at": None, "success": None, "result": None, "error": None}
+
+
+async def _run_sync_locked(trigger: str) -> dict:
+    if _sync_lock.locked():
+        raise HTTPException(status_code=409, detail="Ya hay una sincronización en curso.")
+    async with _sync_lock:
+        _last_sync["started_at"] = datetime.now(timezone.utc).isoformat()
+        _last_sync["trigger"] = trigger
+        try:
+            result = await run_sharepoint_sync()
+            _last_sync.update(success=True, result=result, error=None)
+        except Exception as exc:  # noqa: BLE001 - se registra y se refleja en /status
+            logger.exception("Fall\u00f3 la sincronizaci\u00f3n de SharePoint (trigger=%s)", trigger)
+            _last_sync.update(success=False, result=None, error=str(exc))
+        finally:
+            _last_sync["finished_at"] = datetime.now(timezone.utc).isoformat()
+        return _last_sync
+
+
+async def _background_sync_loop() -> None:
+    interval_seconds = settings.index_sync_interval_minutes * 60
+    while True:
+        await asyncio.sleep(interval_seconds)
+        if _sync_lock.locked():
+            logger.info("Se omite la corrida programada: ya hay una sincronizaci\u00f3n en curso.")
+            continue
+        await _run_sync_locked(trigger="schedule")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    task = asyncio.create_task(_background_sync_loop())
+    try:
+        yield
+    finally:
+        task.cancel()
+
+
+app = FastAPI(title="SharePoint Indexer API", version="1.0.0", lifespan=lifespan)
 
 
 @app.get("/health")
@@ -23,62 +75,18 @@ def health():
     return {"status": "ok"}
 
 
-@app.post("/reindex")
-def reindex():
-    """Dispara manualmente una corrida del indexer (uso: botón de UI, cron externo, etc.)."""
-    post(f"indexers/{settings.search_indexer_name}/run")
-    return {"triggered": True, "indexer": settings.search_indexer_name}
+@app.post("/index/sharepoint")
+async def index_sharepoint():
+    """Revisa SharePoint por archivos nuevos/modificados/borrados y sincroniza el índice."""
+    result = await _run_sync_locked(trigger="manual")
+    return {"success": result["success"], **(result["result"] or {}), "error": result["error"]}
 
 
-@app.get("/reindex/status")
-def reindex_status():
-    resp = get(f"indexers/{settings.search_indexer_name}/status")
-    data = resp.json()
-    last_result = data.get("lastResult") or {}
+@app.get("/index/sharepoint/status")
+def index_sharepoint_status():
+    """Estado de la última sincronización (manual o disparada por el schedule automático)."""
     return {
-        "status": data.get("status"),
-        "lastResultStatus": last_result.get("status"),
-        "itemsProcessed": last_result.get("itemsProcessed"),
-        "itemsFailed": last_result.get("itemsFailed"),
-        "errorMessage": last_result.get("errorMessage"),
-        "startTime": last_result.get("startTime"),
-        "endTime": last_result.get("endTime"),
+        "sync_interval_minutes": settings.index_sync_interval_minutes,
+        "running": _sync_lock.locked(),
+        **_last_sync,
     }
-
-
-@app.get("/webhooks/sharepoint")
-def validate_subscription(validationToken: str | None = None):
-    """Microsoft Graph valida la suscripción con un GET que incluye ?validationToken=...
-    Hay que devolverlo tal cual, como texto plano, con 200 OK."""
-    if validationToken is None:
-        raise HTTPException(status_code=400, detail="Falta validationToken")
-    return Response(content=validationToken, media_type="text/plain", status_code=200)
-
-
-@app.post("/webhooks/sharepoint")
-async def receive_notification(request: Request):
-    """Recibe notificaciones de cambio (Microsoft Graph change notifications) sobre la
-    biblioteca de SharePoint y dispara una corrida incremental del indexer.
-
-    Seguridad: se valida el 'clientState' compartido para confirmar que la notificación
-    viene de la suscripción que creamos (ver scripts/create_graph_subscription.py).
-    """
-    payload = await request.json()
-    notifications = payload.get("value", [])
-
-    for notification in notifications:
-        client_state = notification.get("clientState")
-        if settings.graph_webhook_client_state and client_state != settings.graph_webhook_client_state:
-            # Notificación no confiable: se ignora en vez de disparar reindexado.
-            continue
-
-    if notifications:
-        try:
-            post(f"indexers/{settings.search_indexer_name}/run")
-        except RuntimeError as exc:
-            # 409 = el indexer ya está corriendo (p.ej. por el schedule); no es un error real.
-            if "409" not in str(exc):
-                raise
-
-    # Graph requiere 202 Accepted rápido (<10s) para no reintentar/desactivar la suscripción.
-    return Response(status_code=202)

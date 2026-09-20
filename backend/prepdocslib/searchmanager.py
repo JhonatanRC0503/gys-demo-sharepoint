@@ -41,15 +41,19 @@ from azure.search.documents.indexes.models import (
     WebKnowledgeSource,
 )
 
-from .blobmanager import BlobManager
 from .embeddings import OpenAIEmbeddings
 from .listfilestrategy import File
 from .strategy import SearchInfo
 from .textsplitter import Chunk
-from ..helpers.env_helper import EnvHelper
-env_helper = EnvHelper()
 
 logger = logging.getLogger("scripts")
+
+
+def _sourcepage_from_file_page(filename: str, page: int = 0) -> str:
+    """Sin Blob Storage: solo compone el label de página a partir del nombre de archivo."""
+    if os.path.splitext(filename)[1].lower() == ".pdf":
+        return f"{os.path.basename(filename)}#page={page + 1}"
+    return os.path.basename(filename)
 
 
 class Section:
@@ -163,8 +167,9 @@ class SearchManager:
                 )
 
             if self.search_images:
-                # Verificar si debemos omitir las incrustaciones de imágenes (para evitar los límites de velocidad de la API de Vision)
-                skip_image_embeddings = env_helper.RAG_SEARCH_IMAGE_EMBEDDINGS
+                # Permite omitir las incrustaciones de imágenes (rate limits de la API de Vision)
+                # sin depender de un helper externo; no se usa en este proyecto (solo texto).
+                skip_image_embeddings = os.environ.get("RAG_SEARCH_IMAGE_EMBEDDINGS", "false").lower() == "true"
 
                 # Only create image vector components if we have vision endpoint AND embeddings are enabled
                 if self.search_info.azure_vision_endpoint and not skip_image_embeddings:
@@ -309,7 +314,7 @@ class SearchManager:
                         facetable=True,
                     ),
                     SimpleField(
-                        name="storageUrl",
+                        name="sharepointUrl",
                         type="Edm.String",
                         filterable=True,
                         facetable=False,
@@ -385,11 +390,11 @@ class SearchManager:
             else:
                 logger.info("Search index %s already exists", self.search_info.index_name)
                 existing_index = await search_index_client.get_index(self.search_info.index_name)
-                if not any(field.name == "storageUrl" for field in existing_index.fields):
-                    logger.info("Adding storageUrl field to index %s", self.search_info.index_name)
+                if not any(field.name == "sharepointUrl" for field in existing_index.fields):
+                    logger.info("Adding sharepointUrl field to index %s", self.search_info.index_name)
                     existing_index.fields.append(
                         SimpleField(
-                            name="storageUrl",
+                            name="sharepointUrl",
                             type="Edm.String",
                             filterable=True,
                             facetable=False,
@@ -661,7 +666,7 @@ class SearchManager:
                         "id": f"{section.content.filename_to_id()}-page-{section_index + batch_index * MAX_BATCH_SIZE}",
                         "content": section.chunk.text,
                         "category": section.category,
-                        "sourcepage": BlobManager.sourcepage_from_file_page(
+                        "sourcepage": _sourcepage_from_file_page(
                             filename=section.content.filename(), page=section.chunk.page_num
                         ),
                         "sourcefile": section.content.filename(),
@@ -671,7 +676,7 @@ class SearchManager:
                     documents.append(document)
                 if url:
                     for document in documents:
-                        document["storageUrl"] = url
+                        document["sharepointUrl"] = url
                 if self.embeddings:
                     if self.field_name_embedding is None:
                         raise ValueError("Embedding field name must be set")

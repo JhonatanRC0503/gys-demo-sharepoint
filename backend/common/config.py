@@ -26,28 +26,28 @@ class Settings:
     sharepoint_folder_path = _require("SHAREPOINT_FOLDER_PATH")
 
     # Azure AI Search
+    search_service_name = _require("SEARCH_SERVICE_NAME")
     search_endpoint = _require("SEARCH_ENDPOINT")
-    search_api_version = os.environ.get("SEARCH_API_VERSION", "2026-08-01-preview")
-    search_datasource_name = os.environ.get("SEARCH_DATASOURCE_NAME", "sharepoint-demo-datasource")
     search_index_name = os.environ.get("SEARCH_INDEX_NAME", "idx-sharepoint-demo")
-    search_skillset_name = os.environ.get("SEARCH_SKILLSET_NAME", "sharepoint-demo-skillset")
-    search_indexer_name = os.environ.get("SEARCH_INDEXER_NAME", "sharepoint-demo-indexer")
     search_admin_key = os.environ.get("SEARCH_ADMIN_KEY", "")
+
+    # Indexación automática (API en background)
+    index_sync_interval_minutes = int(os.environ.get("INDEX_SYNC_INTERVAL_MINUTES", "5"))
+
+    # Azure AI Document Intelligence (parsing/chunking vía prepdocslib)
+    document_intelligence_service = _require("AZURE_DOCUMENTINTELLIGENCE_SERVICE")
+    document_intelligence_key = os.environ.get("AZURE_DOCUMENTINTELLIGENCE_KEY", "")
 
     # Azure OpenAI (embeddings)
     aoai_endpoint = _require("AZURE_OPENAI_ENDPOINT")
-    aoai_embedding_deployment = os.environ.get("AZURE_OPENAI_EMBEDDING_DEPLOYMENT", "text-embedding-3-small")
-    aoai_embedding_dimensions = int(os.environ.get("AZURE_OPENAI_EMBEDDING_DIMENSIONS", "1536"))
+    aoai_embedding_deployment = os.environ.get("AZURE_OPENAI_EMBEDDING_DEPLOYMENT", "text-embedding-3-large")
+    aoai_embedding_dimensions = int(os.environ.get("AZURE_OPENAI_EMBEDDING_DIMENSIONS", "3072"))
 
     # Foundry
     foundry_project_endpoint = _require("FOUNDRY_PROJECT_ENDPOINT")
     foundry_model_deployment = os.environ.get("FOUNDRY_MODEL_DEPLOYMENT", "gpt-4.1-mini")
     foundry_agent_name = os.environ.get("FOUNDRY_AGENT_NAME", "agent-sharepoint")
     foundry_search_connection_name = _require("FOUNDRY_SEARCH_CONNECTION_NAME")
-
-    # Webhook / API
-    graph_webhook_client_state = os.environ.get("GRAPH_WEBHOOK_CLIENT_STATE", "")
-    public_webhook_base_url = os.environ.get("PUBLIC_WEBHOOK_BASE_URL", "")
 
 
 settings = Settings()

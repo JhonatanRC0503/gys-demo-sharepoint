@@ -2,12 +2,11 @@
 
 import logging
 from enum import Enum
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from azure.core.credentials import AzureKeyCredential
 from azure.core.credentials_async import AsyncTokenCredential
 
-from .blobmanager import BaseBlobManager
 from .embeddings import ImageEmbeddings
 from .mediadescriber import (
     ContentUnderstandingDescriber,
@@ -15,6 +14,9 @@ from .mediadescriber import (
     MultimodalModelDescriber,
 )
 from .page import ImageOnPage
+
+if TYPE_CHECKING:
+    from .blobmanager import BaseBlobManager
 
 logger = logging.getLogger("scripts")
 
@@ -114,7 +116,7 @@ async def process_page_image(
     *,
     image: "ImageOnPage",
     document_filename: str,
-    blob_manager: Optional[BaseBlobManager],
+    blob_manager: Optional["BaseBlobManager"],
     image_embeddings_client: Optional[ImageEmbeddings],
     figure_processor: Optional[FigureProcessor] = None,
     user_oid: Optional[str] = None,

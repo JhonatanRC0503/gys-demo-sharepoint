@@ -11,7 +11,6 @@ from azure.core.credentials_async import AsyncTokenCredential
 from azure.identity.aio import get_bearer_token_provider
 from openai import AsyncOpenAI
 
-from .blobmanager import BlobManager
 from .csvparser import CsvParser
 from .embeddings import ImageEmbeddings, OpenAIEmbeddings
 from .figureprocessor import FigureProcessor, MediaDescriptionStrategy
@@ -191,36 +190,6 @@ def setup_embeddings_service(
         disable_batch=disable_batch,
         azure_deployment_name=azure_openai_deployment,
         azure_endpoint=azure_openai_endpoint,
-    )
-
-
-def setup_blob_manager(
-    azure_credential: AsyncTokenCredential | str,
-    storage_account: str,
-    storage_container: str,
-    storage_resource_group: Optional[str] = None,
-    subscription_id: Optional[str] = None,
-    storage_key: Optional[str] = None,
-    image_storage_container: Optional[str] = None,
-) -> BlobManager:
-    """Create a BlobManager instance for document or figure storage.
-
-    The optional resource group and subscription are retained for parity with
-    local ingestion (used for diagnostic operations) but not required by
-    Azure Functions.
-    The optional image storage container is used for the multimodal ingestion feature.
-    """
-    endpoint = f"https://{storage_account}.blob.core.windows.net"
-    storage_credential: AsyncTokenCredential | str = azure_credential if storage_key is None else storage_key
-
-    return BlobManager(
-        endpoint=endpoint,
-        container=storage_container,
-        account=storage_account,
-        credential=storage_credential,
-        resource_group=storage_resource_group,
-        subscription_id=subscription_id,
-        image_container=image_storage_container,
     )
 
 

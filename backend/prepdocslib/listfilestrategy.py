@@ -10,9 +10,6 @@ from glob import glob
 from typing import IO, Optional
 
 from azure.core.credentials_async import AsyncTokenCredential
-from azure.storage.filedatalake.aio import (
-    DataLakeServiceClient,
-)
 
 logger = logging.getLogger("scripts")
 
@@ -158,6 +155,9 @@ class ADLSGen2ListFileStrategy(ListFileStrategy):
         self.enable_global_documents = enable_global_documents
 
     async def list_paths(self) -> AsyncGenerator[str, None]:
+        # Import diferido: solo esta estrategia (no usada por el pipeline de SharePoint) necesita el SDK de ADLS Gen2.
+        from azure.storage.filedatalake.aio import DataLakeServiceClient
+
         async with DataLakeServiceClient(
             account_url=f"https://{self.data_lake_storage_account}.dfs.core.windows.net", credential=self.credential
         ) as service_client, service_client.get_file_system_client(self.data_lake_filesystem) as filesystem_client:
@@ -168,6 +168,8 @@ class ADLSGen2ListFileStrategy(ListFileStrategy):
                 yield path.name
 
     async def list(self) -> AsyncGenerator[File, None]:
+        from azure.storage.filedatalake.aio import DataLakeServiceClient
+
         async with DataLakeServiceClient(
             account_url=f"https://{self.data_lake_storage_account}.dfs.core.windows.net", credential=self.credential
         ) as service_client, service_client.get_file_system_client(self.data_lake_filesystem) as filesystem_client:
